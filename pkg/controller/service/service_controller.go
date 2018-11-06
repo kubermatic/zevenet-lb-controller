@@ -127,6 +127,12 @@ func (r *ReconcileService) Reconcile(request reconcile.Request) (reconcile.Resul
 		return reconcile.Result{Requeue: true}, fmt.Errorf("Service %s/%s has no LoadbalancerIP configured", service.Namespace, service.Name)
 	}
 
+	// TODO: This is a limitation of the zevent go lib we use, the actual api allows
+	// multiple services
+	if len(service.Spec.Ports) != 1 {
+		return reconcile.Result{}, fmt.Errorf("this controller currently only supports services withe xactly one port")
+	}
+
 	virtIntName := fmt.Sprintf("%s:%s", Config.ParentInterface, service.Spec.LoadBalancerIP)
 	virtIntName = strings.Replace(virtIntName, ".", "", -1)
 
@@ -135,7 +141,45 @@ func (r *ReconcileService) Reconcile(request reconcile.Request) (reconcile.Resul
 		return reconcile.Result{Requeue: true}, fmt.Errorf("failed to ensure virtual interface: %v", err)
 	}
 
+	farmName := fmt.Sprintf("kube-%s-%s-%s", service.Namespace, service.Name, service.Spec.LoadBalancerIP)
+	farmName = strings.Replace(farmName, ".", "-", -1)
+	if err := ensureFarm(farmName, service.Spec.LoadBalancerIP, int(service.Spec.Ports[0].Port)); err != nil {
+		glog.V(4).Infof("failed to ensure farm %s: %v", farmName, err)
+		return reconcile.Result{Requeue: true}, fmt.Errorf("failed to ensure farm %s: %v", farmName, err)
+	}
+
 	return reconcile.Result{}, nil
+}
+
+func ensureFarm(name, virtualIP string, virtualPort int) error {
+	farm, err := Config.ZAPISession.GetFarm(name)
+	// Unfortunatelly there doesn't seem to be an easy check for a 404
+	// The underlying lib has one that didn't apply in my tests, so I assume
+	// it depends on the Zevenet version - We are optimistic here and just try
+	// to create on err
+	if err != nil {
+		glog.V(4).Infof("Error when getting farm %s: %v", name, err)
+	}
+
+	if err != nil && farm != nil && !farm.IsHTTP() && farm.VirtualIP == virtualIP && farm.VirtualPort == virtualPort {
+		return nil
+	}
+
+	// The underlying lib does not support upting non-http farms yet so we have to delete and
+	// re-create it
+	// TODO: patch the zevenet lib to allow updating non-http farms
+	if farm != nil {
+		if _, err := Config.ZAPISession.DeleteFarm(name); err != nil {
+			return fmt.Errorf("failed to delete farm %s: %v", name, err)
+		}
+	}
+
+	_, err = Config.ZAPISession.CreateFarmAsL4xNat(name, virtualIP, virtualPort)
+	if err != nil {
+		return fmt.Errorf("failed to create farm %s: %v", name, err)
+	}
+
+	return nil
 }
 
 func ensureVirtInt(name, ip string) error {
