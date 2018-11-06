@@ -19,7 +19,7 @@ import (
 	"flag"
 	"os"
 
-	zevenet "github.com/anmoel/zevenet-lb-go"
+	zevenet "github.com/alvaroaleman/zevenet-lb-go"
 	"github.com/golang/glog"
 
 	"github.com/kubermatic/zevenet-controller/pkg/apis"

@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"strings"
 
-	zevenet "github.com/anmoel/zevenet-lb-go"
+	zevenet "github.com/alvaroaleman/zevenet-lb-go"
 	"github.com/golang/glog"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -148,6 +148,28 @@ func (r *ReconcileService) Reconcile(request reconcile.Request) (reconcile.Resul
 		return reconcile.Result{Requeue: true}, fmt.Errorf("failed to ensure farm %s: %v", farmName, err)
 	}
 
+	nodeList := &corev1.NodeList{}
+	// TODO: Find out how to use a lister with Kubebuilder
+	if err := r.List(context.Background(), nil, nodeList); err != nil {
+		return reconcile.Result{Requeue: true}, fmt.Errorf("failed to list nodes: %v", err)
+	}
+
+	var desiredBackends []zevenet.BackendDetails
+	for _, node := range nodeList.Items {
+		for _, nodeAddress := range node.Status.Addresses {
+			if nodeAddress.Type == corev1.NodeExternalIP || nodeAddress.Type == corev1.NodeInternalIP {
+				desiredBackends = append(desiredBackends, zevenet.BackendDetails{
+					IPAddress: nodeAddress.Address,
+					Port:      int(service.Spec.Ports[0].NodePort),
+				})
+			}
+		}
+	}
+	if err := ensureBackends(farmName, desiredBackends); err != nil {
+		glog.V(4).Infof("Failed to ensure backends for farm %s: %v", farmName, err)
+		return reconcile.Result{Requeue: true}, fmt.Errorf("failed to ensure backends for farm %s: %v", farmName, err)
+	}
+
 	return reconcile.Result{}, nil
 }
 
@@ -180,6 +202,53 @@ func ensureFarm(name, virtualIP string, virtualPort int) error {
 	}
 
 	return nil
+}
+
+func ensureBackends(farmName string, desiredBackends []zevenet.BackendDetails) error {
+	farm, err := Config.ZAPISession.GetFarm(farmName)
+	if err != nil {
+		return fmt.Errorf("failed to get farm %s: %v", farmName, err)
+	}
+
+	var backendsToDelete, backendsToCreate []zevenet.BackendDetails
+	for _, existingBackend := range farm.Backends {
+		if !isBackendInBackendsList(existingBackend, desiredBackends) {
+			backendsToDelete = append(backendsToDelete, existingBackend)
+		}
+	}
+
+	for _, desiredBackend := range desiredBackends {
+		if !isBackendInBackendsList(desiredBackend, farm.Backends) {
+			backendsToCreate = append(backendsToCreate, desiredBackend)
+		}
+	}
+
+	for _, backendToCreate := range backendsToCreate {
+		if err := Config.ZAPISession.CreateL4xNatBackend(farmName, backendToCreate.IPAddress, backendToCreate.Port); err != nil {
+			return fmt.Errorf("failed to create backend for farm %s: %v", farmName, err)
+		}
+	}
+
+	for _, backendToDelete := range backendsToDelete {
+		if err := Config.ZAPISession.DeleteL4xNatBackend(farmName, backendToDelete.ID); err != nil {
+			return fmt.Errorf("faild to delete backend for farm %s: %v", farmName, err)
+		}
+	}
+
+	return nil
+}
+
+func isBackendInBackendsList(backend zevenet.BackendDetails, backendList []zevenet.BackendDetails) bool {
+
+	for _, backendListItem := range backendList {
+		// We intentionally conpare IPAddress and Port only as these are the only settings
+		// we can set on create
+		if backendListItem.IPAddress == backend.IPAddress && backendListItem.Port == backend.Port {
+			return true
+		}
+	}
+
+	return false
 }
 
 func ensureVirtInt(name, ip string) error {

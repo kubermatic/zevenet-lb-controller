@@ -166,6 +166,7 @@ type FarmDetails struct {
 	VirtualIP                string              `json:"vip"`
 	VirtualPort              int                 `json:"vport"`
 	Services                 []ServiceDetails    `json:"services"`
+	Backends                 []BackendDetails    `json:"backends"`
 }
 
 // String returns the farm's name and listener.
@@ -638,6 +639,22 @@ func (s *ZapiSession) DeleteBackend(farmName string, serviceName string, backend
 
 	// delete the backend
 	return true, s.delete("farms", farmName, "services", serviceName, "backends", strconv.Itoa(backendId))
+}
+
+// DeleteL4xNatBackend deletes a backend for a L4xNat farm
+func (s *ZapiSession) DeleteL4xNatBackend(farmName string, backendId int) error {
+	return s.delete("farms", farmName, "backends", strconv.Itoa(backendId))
+}
+
+// CreateL4xNatBackend creates a new backend for the given L4xNat farm
+func (s *ZapiSession) CreateL4xNatBackend(farmName, backendIP string, backendPort int) error {
+	// create the backend
+	req := backendCreate{
+		IPAddress: backendIP,
+		Port:      backendPort,
+	}
+
+	return s.post(req, "farms", farmName, "backends")
 }
 
 // CreateBackend creates a new backend on a service on a farm.

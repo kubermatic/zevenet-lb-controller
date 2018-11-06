@@ -10,12 +10,12 @@
   version = "v0.32.0"
 
 [[projects]]
-  branch = "master"
-  digest = "1:4c240fe250bd9976a293ad0f496f0d0b9a54a4551128585ae690cb8cceecaca6"
-  name = "github.com/anmoel/zevenet-lb-go"
+  branch = "support-backends-for-farms"
+  digest = "1:f0ccc9be0af79d593d667496a240136f88b727792235bea992f2dadae16d48f8"
+  name = "github.com/alvaroaleman/zevenet-lb-go"
   packages = ["."]
   pruneopts = "NUT"
-  revision = "5132c3e01d79223c396efe5510a84950b89059ed"
+  revision = "b18b04350fe33d0a1af9f447bcdfd0a864b5a0a3"
 
 [[projects]]
   digest = "1:ffe9824d294da03b391f44e1ae8281281b4afc1bdaa9588c9097785e3af10cec"
@@ -840,7 +840,7 @@
   analyzer-name = "dep"
   analyzer-version = 1
   input-imports = [
-    "github.com/anmoel/zevenet-lb-go",
+    "github.com/alvaroaleman/zevenet-lb-go",
     "github.com/emicklei/go-restful",
     "github.com/golang/glog",
     "github.com/onsi/ginkgo",
