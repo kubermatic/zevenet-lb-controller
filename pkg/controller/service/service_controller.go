@@ -17,6 +17,9 @@ package service
 
 import (
 	"context"
+	"fmt"
+
+	"github.com/golang/glog"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -99,6 +102,20 @@ func (r *ReconcileService) Reconcile(request reconcile.Request) (reconcile.Resul
 		}
 		// Error reading the object - requeue the request.
 		return reconcile.Result{}, err
+	}
+	if service.Spec.Type != corev1.ServiceTypeLoadBalancer {
+		glog.V(4).Infof("Skipping service %s/%s as its not of type Loadbalancer", service.Namespace, service.Name)
+		return reconcile.Result{}, nil
+	}
+
+	if service.DeletionTimestamp != nil {
+		//TODO: Cleanup logic
+		return reconcile.Result{}, fmt.Errorf("Not implemented")
+	}
+
+	if service.Spec.LoadBalancerIP == "" {
+		glog.V(4).Infof("Failed to reconcile service %s/%s: No LoadbalancerIP configured", service.Namespace, service.Name)
+		return reconcile.Result{Requeue: true}, fmt.Errorf("Service %s/%s has no LoadbalancerIP configured", service.Namespace, service.Name)
 	}
 
 	return reconcile.Result{}, nil
