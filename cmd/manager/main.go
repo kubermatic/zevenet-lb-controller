@@ -18,6 +18,7 @@ package main
 import (
 	"flag"
 	"os"
+	"time"
 
 	zevenet "github.com/alvaroaleman/zevenet-lb-go"
 	"github.com/golang/glog"
@@ -76,7 +77,10 @@ func main() {
 
 	// Create a new Cmd to provide shared dependencies and start components
 	log.Info("setting up manager")
-	mgr, err := manager.New(cfg, manager.Options{})
+	// We use a short SyncPeriod because someone may change the Zevenet config
+	// in the UI
+	syncPeriod := 30 * time.Second
+	mgr, err := manager.New(cfg, manager.Options{SyncPeriod: &syncPeriod})
 	if err != nil {
 		log.Error(err, "unable to set up overall controller manager")
 		os.Exit(1)
