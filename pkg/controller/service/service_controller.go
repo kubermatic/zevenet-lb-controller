@@ -18,7 +18,9 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 
+	zevenet "github.com/anmoel/zevenet-lb-go"
 	"github.com/golang/glog"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -44,6 +46,13 @@ import (
 func Add(mgr manager.Manager) error {
 	return add(mgr, newReconciler(mgr))
 }
+
+type ZevenetConfiguration struct {
+	ParentInterface string
+	ZAPISession     *zevenet.ZapiSession
+}
+
+var Config *ZevenetConfiguration
 
 // newReconciler returns a new reconcile.Reconciler
 func newReconciler(mgr manager.Manager) reconcile.Reconciler {
@@ -118,5 +127,38 @@ func (r *ReconcileService) Reconcile(request reconcile.Request) (reconcile.Resul
 		return reconcile.Result{Requeue: true}, fmt.Errorf("Service %s/%s has no LoadbalancerIP configured", service.Namespace, service.Name)
 	}
 
+	virtIntName := fmt.Sprintf("%s:%s", Config.ParentInterface, service.Spec.LoadBalancerIP)
+	virtIntName = strings.Replace(virtIntName, ".", "", -1)
+
+	if err := ensureVirtInt(virtIntName, service.Spec.LoadBalancerIP); err != nil {
+		glog.V(4).Infof("failed to ensure virtual interface: %v", err)
+		return reconcile.Result{Requeue: true}, fmt.Errorf("failed to ensure virtual interface: %v", err)
+	}
+
 	return reconcile.Result{}, nil
+}
+
+func ensureVirtInt(name, ip string) error {
+	virtInterface, err := Config.ZAPISession.GetVirtInt(name)
+	// Unfortunatelly there doesn't seem to be an easy check for a 404
+	// The underlying lib has one that didn't apply in my tests, so I assume
+	// it depends on the Zevenet version - We are optimistic here and just try
+	// to create on err
+	if err != nil {
+		glog.V(4).Infof("Error wehen getting virtual interface %s: %v", name, err)
+	}
+	if virtInterface != nil && virtInterface.IP != ip {
+		_, err = Config.ZAPISession.DeleteVirtInt(name)
+		if err != nil {
+			return fmt.Errorf("failed to delete virtual interface %s: %v", name, err)
+		}
+	}
+
+	if err != nil || (virtInterface != nil && virtInterface.IP != ip) {
+		_, err := Config.ZAPISession.CreateVirtInt(name, ip)
+		if err != nil {
+			return fmt.Errorf("failed to create virtual interface %s: %v", name, err)
+		}
+	}
+	return nil
 }

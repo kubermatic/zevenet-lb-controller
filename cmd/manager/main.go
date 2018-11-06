@@ -16,10 +16,15 @@ limitations under the License.
 package main
 
 import (
+	"flag"
 	"os"
+
+	zevenet "github.com/anmoel/zevenet-lb-go"
+	"github.com/golang/glog"
 
 	"github.com/kubermatic/zevenet-controller/pkg/apis"
 	"github.com/kubermatic/zevenet-controller/pkg/controller"
+	servicecontroller "github.com/kubermatic/zevenet-controller/pkg/controller/service"
 	"github.com/kubermatic/zevenet-controller/pkg/webhook"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
@@ -29,8 +34,37 @@ import (
 )
 
 func main() {
+	flag.Set("logtostderr", "true")
+	flag.Parse()
+
 	logf.SetLogger(logf.ZapLogger(false))
 	log := logf.Log.WithName("entrypoint")
+
+	zevenetURL := os.Getenv("ZEVENET_URL")
+	if zevenetURL == "" {
+		glog.Fatalf("Environment var ZEVENET_URL must be set!")
+	}
+
+	zevenetToken := os.Getenv("ZEVENET_TOKEN")
+	if zevenetToken == "" {
+		glog.Fatalf("Environment var ZEVENET_TOKEN must be set!")
+	}
+
+	parentInterfaceName := os.Getenv("ZEVENET_PARENT_INTERFACE_NAME")
+	if parentInterfaceName == "" {
+		glog.Infof("Env var ZEVENET_PARENT_INTERFACE_NAME is unset, defaulting to eth0")
+		parentInterfaceName = "eth0"
+	}
+
+	session, err := zevenet.Connect(zevenetURL, zevenetToken, nil)
+	if err != nil {
+		glog.Fatalf("Failed to create Zevenet session: %v", err)
+	}
+
+	servicecontroller.Config = &servicecontroller.ZevenetConfiguration{
+		ParentInterface: parentInterfaceName,
+		ZAPISession:     session,
+	}
 
 	// Get a config to talk to the apiserver
 	log.Info("setting up client for manager")

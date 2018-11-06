@@ -17,7 +17,9 @@ required = [
     ]
 
 [prune]
+  non-go = true
   go-tests = true
+  unused-packages = true
 
 
 # STANZAS BELOW ARE GENERATED AND MAY BE WRITTEN - DO NOT MODIFY BELOW THIS LINE.
