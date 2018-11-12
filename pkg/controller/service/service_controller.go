@@ -23,16 +23,18 @@ import (
 	zevenet "github.com/alvaroaleman/zevenet-lb-go"
 	"github.com/golang/glog"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 )
@@ -69,13 +71,52 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 		return err
 	}
 
-	// TODO(user): Modify this to be the types you create
-	// Uncomment watch a Deployment created by Service - change this for objects you create
-	err = c.Watch(&source.Kind{Type: &appsv1.Deployment{}}, &handler.EnqueueRequestForOwner{
-		IsController: true,
-		OwnerType:    &corev1.Service{},
-	})
-	if err != nil {
+	nodeToServiceMapFn := handler.ToRequestsFunc(
+		func(a handler.MapObject) []reconcile.Request {
+			serviceList := &corev1.ServiceList{}
+			if err := mgr.GetClient().List(context.Background(), &client.ListOptions{}, serviceList); err != nil {
+				glog.Errorf("failed to list services: %v", err)
+				return nil
+			}
+			var reconcileRequests []reconcile.Request
+			for _, service := range serviceList.Items {
+				if service.Spec.Type != corev1.ServiceTypeLoadBalancer {
+					continue
+				}
+				reconcileRequests = append(reconcileRequests, reconcile.Request{NamespacedName: types.NamespacedName{
+					Name:      service.Name,
+					Namespace: service.Namespace,
+				},
+				})
+			}
+			return reconcileRequests
+		})
+	nodePredicateFunc := predicate.Funcs{
+		CreateFunc: func(_ event.CreateEvent) bool { return true },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldNode := e.ObjectOld.(*corev1.Node)
+			newNode := e.ObjectNew.(*corev1.Node)
+			if len(oldNode.Status.Conditions) != len(newNode.Status.Conditions) {
+				return true
+			}
+			for _, oldNodeCondition := range oldNode.Status.Conditions {
+				for _, newNodeCondition := range newNode.Status.Conditions {
+					if oldNodeCondition.Type == newNodeCondition.Type && oldNodeCondition.Status == newNodeCondition.Status {
+						continue
+					}
+				}
+				return true
+			}
+			// Do not req if both new and old node have the same conditions regarding Type and Status
+			// We do not care about lastHeartbeatTime and lastTransitionTime
+			return false
+		},
+		DeleteFunc: func(_ event.DeleteEvent) bool { return true },
+	}
+	if err := c.Watch(&source.Kind{Type: &corev1.Node{}}, &handler.EnqueueRequestsFromMapFunc{
+		ToRequests: nodeToServiceMapFn},
+		nodePredicateFunc,
+	); err != nil {
 		return err
 	}
 
