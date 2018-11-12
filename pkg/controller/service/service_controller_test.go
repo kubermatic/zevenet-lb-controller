@@ -26,6 +26,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -38,7 +39,10 @@ var expectedRequest = reconcile.Request{NamespacedName: types.NamespacedName{Nam
 const timeout = time.Second * 5
 
 func TestReconcile(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	instance := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "foo", Namespace: "default"}}
+	instance.Spec.Type = corev1.ServiceTypeLoadBalancer
 
 	// Setup the Manager and Controller.  Wrap the Controller Reconcile function so it writes each request to a
 	// channel when it is finished.
@@ -69,10 +73,58 @@ func TestReconcile(t *testing.T) {
 		return
 	}
 	t.Fatalf("error creating service: %v", err)
-	defer c.Delete(context.TODO(), instance)
+	defer c.Delete(context.Background(), instance)
 	if err := waitForExpectedReconcileRequest(requests, expectedRequest); err != nil {
+		t.Fatalf("failed waiting for reconcile after creating service: %v", err)
 		t.Fatal(err)
 	}
+
+	// Create a node object and expect the Reconcile
+	node := &corev1.Node{}
+	node.Name = "testnode"
+	if err := c.Create(ctx, node); err != nil {
+		t.Fatalf("failed to create node: %v", err)
+	}
+	if err := waitForExpectedReconcileRequest(requests, expectedRequest); err != nil {
+		t.Fatalf("failed to wait for reconcile after creating node: %v", err)
+	}
+
+	// Update the node objects spec and expect no Reconcile as the Reconcile should
+	// only be triggered by changes to .Status.Conditions
+	if err := updateNode(c, node, func(n *corev1.Node) { n.Spec.PodCIDR = "172.25.0.0/24" }); err != nil {
+		t.Fatalf("failed to update node with podCIDR: %v", err)
+	}
+	err = waitForExpectedReconcileRequest(requests, expectedRequest)
+	if err == nil || err.Error() != "timed out waiting to receive a request" {
+		t.Fatalf("did not get expected error='timed out waiting to receive a request' but instead got err=%v", err)
+	}
+	err = nil
+
+	// Update the node objects conditions and expect a Reconcile
+	if err := updateNode(c, node, func(n *corev1.Node) { n.Status.Conditions = []corev1.NodeCondition{corev1.NodeCondition{}} }); err != nil {
+		t.Fatalf("failed to update node with a condition: %v", err)
+	}
+	if err := waitForExpectedReconcileRequest(requests, expectedRequest); err != nil {
+		t.Fatalf("failed to wait for a reconcile after adding a condition to the node: %v", err)
+	}
+}
+
+func updateNode(c client.Client, node *corev1.Node, modifyFunc func(*corev1.Node)) error {
+	// We have to store these as the node object may be nil later on
+	name := node.Name
+	namespace := node.Namespace
+
+	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		if err := c.Get(context.Background(), types.NamespacedName{Namespace: namespace, Name: name}, node); err != nil {
+			return err
+		}
+		modifyFunc(node)
+		if err := c.Update(context.Background(), node); err != nil {
+			return err
+		}
+		return nil
+	})
+	return err
 }
 
 func waitForExpectedReconcileRequest(c chan reconcile.Request, expected reconcile.Request) error {
@@ -82,7 +134,7 @@ func waitForExpectedReconcileRequest(c chan reconcile.Request, expected reconcil
 			return nil
 		}
 		return fmt.Errorf("received request does not match expected request")
-	case <-time.After(5 * time.Second):
-		return fmt.Errorf("timed out waiting to receive an object")
+	case <-time.After(2 * time.Second):
+		return fmt.Errorf("timed out waiting to receive a request")
 	}
 }
