@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -51,7 +52,7 @@ var Config *ZevenetConfiguration
 
 // newReconciler returns a new reconcile.Reconciler
 func newReconciler(mgr manager.Manager) reconcile.Reconciler {
-	return &ReconcileService{Client: mgr.GetClient(), scheme: mgr.GetScheme()}
+	return &ReconcileService{Client: mgr.GetClient(), scheme: mgr.GetScheme(), recorder: mgr.GetRecorder("zevenet-service-controller")}
 }
 
 // add adds a new Controller to mgr with r as the reconcile.Reconciler
@@ -86,7 +87,8 @@ var _ reconcile.Reconciler = &ReconcileService{}
 // ReconcileService reconciles a Service object
 type ReconcileService struct {
 	client.Client
-	scheme *runtime.Scheme
+	scheme   *runtime.Scheme
+	recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
@@ -106,6 +108,15 @@ func (r *ReconcileService) Reconcile(request reconcile.Request) (reconcile.Resul
 		// Error reading the object - requeue the request.
 		return reconcile.Result{}, err
 	}
+	result, err := r.actualReconcile(ctx, service)
+	if err != nil {
+		r.recorder.Eventf(service, corev1.EventTypeWarning, "Error", "%v", err)
+	}
+	return result, err
+}
+
+// We wrap this in oder to be easely able to emit on event on errors
+func (r *ReconcileService) actualReconcile(ctx context.Context, service *corev1.Service) (reconcile.Result, error) {
 	if service.Spec.Type != corev1.ServiceTypeLoadBalancer {
 		glog.V(4).Infof("Skipping service %s/%s as its not of type Loadbalancer", service.Namespace, service.Name)
 		return reconcile.Result{}, nil
@@ -154,12 +165,12 @@ func (r *ReconcileService) Reconcile(request reconcile.Request) (reconcile.Resul
 		}
 	}
 
-	if err := ensureVirtInt(virtIntName, service.Spec.LoadBalancerIP); err != nil {
+	if err := r.ensureVirtInt(virtIntName, service); err != nil {
 		glog.V(4).Infof("failed to ensure virtual interface: %v", err)
 		return reconcile.Result{Requeue: true}, fmt.Errorf("failed to ensure virtual interface: %v", err)
 	}
 
-	if err := ensureFarm(farmName, service.Spec.LoadBalancerIP, int(service.Spec.Ports[0].Port)); err != nil {
+	if err := r.ensureFarm(farmName, service, int(service.Spec.Ports[0].Port)); err != nil {
 		glog.V(4).Infof("failed to ensure farm %s: %v", farmName, err)
 		return reconcile.Result{Requeue: true}, fmt.Errorf("failed to ensure farm %s: %v", farmName, err)
 	}
@@ -187,14 +198,14 @@ func (r *ReconcileService) Reconcile(request reconcile.Request) (reconcile.Resul
 	}
 
 	service.Status.LoadBalancer.Ingress = []corev1.LoadBalancerIngress{{IP: service.Spec.LoadBalancerIP}}
-	if err = r.Status().Update(ctx, service); err != nil {
+	if err := r.Status().Update(ctx, service); err != nil {
 		return reconcile.Result{Requeue: true}, fmt.Errorf("fauked to set service status: %v", err)
 	}
 
 	return reconcile.Result{}, nil
 }
 
-func ensureFarm(name, virtualIP string, virtualPort int) error {
+func (r *ReconcileService) ensureFarm(name string, service *corev1.Service, virtualPort int) error {
 	farm, err := Config.ZAPISession.GetFarm(name)
 	// Unfortunatelly there doesn't seem to be an easy check for a 404
 	// The underlying lib has one that didn't apply in my tests, so I assume
@@ -203,6 +214,7 @@ func ensureFarm(name, virtualIP string, virtualPort int) error {
 	if err != nil {
 		glog.V(4).Infof("Error when getting farm %s: %v", name, err)
 	}
+	virtualIP := service.Spec.LoadBalancerIP
 
 	if err != nil && farm != nil && !farm.IsHTTP() && farm.VirtualIP == virtualIP && farm.VirtualPort == virtualPort {
 		return nil
@@ -215,12 +227,14 @@ func ensureFarm(name, virtualIP string, virtualPort int) error {
 		if _, err := Config.ZAPISession.DeleteFarm(name); err != nil {
 			return fmt.Errorf("failed to delete farm %s: %v", name, err)
 		}
+		r.recorder.Eventf(service, corev1.EventTypeNormal, "Created", "Successfully deleted farm %s", name)
 	}
 
 	_, err = Config.ZAPISession.CreateFarmAsL4xNat(name, virtualIP, virtualPort)
 	if err != nil {
 		return fmt.Errorf("failed to create farm %s: %v", name, err)
 	}
+	r.recorder.Eventf(service, corev1.EventTypeNormal, "Created", "Successfully created farm %s", name)
 
 	return nil
 }
@@ -272,7 +286,7 @@ func isBackendInBackendsList(backend zevenet.BackendDetails, backendList []zeven
 	return false
 }
 
-func ensureVirtInt(name, ip string) error {
+func (r *ReconcileService) ensureVirtInt(name string, service *corev1.Service) error {
 	virtInterface, err := Config.ZAPISession.GetVirtInt(name)
 	// Unfortunatelly there doesn't seem to be an easy check for a 404
 	// The underlying lib has one that didn't apply in my tests, so I assume
@@ -281,18 +295,20 @@ func ensureVirtInt(name, ip string) error {
 	if err != nil {
 		glog.V(4).Infof("Error when getting virtual interface %s: %v", name, err)
 	}
-	if virtInterface != nil && virtInterface.IP != ip {
+	if virtInterface != nil && virtInterface.IP != service.Spec.LoadBalancerIP {
 		_, err = Config.ZAPISession.DeleteVirtInt(name)
 		if err != nil {
 			return fmt.Errorf("failed to delete virtual interface %s: %v", name, err)
 		}
+		r.recorder.Eventf(service, corev1.EventTypeNormal, "Created", "successfully deleted virtual interface %s", name)
 	}
 
-	if err != nil || (virtInterface != nil && virtInterface.IP != ip) {
-		_, err := Config.ZAPISession.CreateVirtInt(name, ip)
+	if err != nil || (virtInterface != nil && virtInterface.IP != service.Spec.LoadBalancerIP) {
+		_, err := Config.ZAPISession.CreateVirtInt(name, service.Spec.LoadBalancerIP)
 		if err != nil {
 			return fmt.Errorf("failed to create virtual interface %s: %v", name, err)
 		}
+		r.recorder.Eventf(service, corev1.EventTypeNormal, "Created", "successfully created virtual interface %s", name)
 	}
 	return nil
 }
