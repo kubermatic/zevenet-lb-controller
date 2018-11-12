@@ -233,7 +233,7 @@ func (r *ReconcileService) actualReconcile(ctx context.Context, service *corev1.
 			}
 		}
 	}
-	if err := ensureBackends(farmName, desiredBackends); err != nil {
+	if err := r.ensureBackends(farmName, desiredBackends, service); err != nil {
 		glog.V(4).Infof("Failed to ensure backends for farm %s: %v", farmName, err)
 		return reconcile.Result{Requeue: true}, fmt.Errorf("failed to ensure backends for farm %s: %v", farmName, err)
 	}
@@ -280,7 +280,7 @@ func (r *ReconcileService) ensureFarm(name string, service *corev1.Service, virt
 	return nil
 }
 
-func ensureBackends(farmName string, desiredBackends []zevenet.BackendDetails) error {
+func (r *ReconcileService) ensureBackends(farmName string, desiredBackends []zevenet.BackendDetails, service *corev1.Service) error {
 	farm, err := Config.ZAPISession.GetFarm(farmName)
 	if err != nil {
 		return fmt.Errorf("failed to get farm %s: %v", farmName, err)
@@ -303,12 +303,14 @@ func ensureBackends(farmName string, desiredBackends []zevenet.BackendDetails) e
 		if err := Config.ZAPISession.CreateL4xNatBackend(farmName, backendToCreate.IPAddress, backendToCreate.Port); err != nil {
 			return fmt.Errorf("failed to create backend for farm %s: %v", farmName, err)
 		}
+		r.recorder.Eventf(service, corev1.EventTypeNormal, "CreatedBackend", "Successfully created backend %s", backendToCreate.String())
 	}
 
 	for _, backendToDelete := range backendsToDelete {
 		if err := Config.ZAPISession.DeleteL4xNatBackend(farmName, backendToDelete.ID); err != nil {
 			return fmt.Errorf("faild to delete backend for farm %s: %v", farmName, err)
 		}
+		r.recorder.Eventf(service, corev1.EventTypeNormal, "DeletedBackend", "Successfully deleted backend %s", backendToDelete.String())
 	}
 
 	return nil
