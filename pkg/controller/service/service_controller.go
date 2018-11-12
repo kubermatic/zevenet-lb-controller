@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -169,19 +170,25 @@ func (r *ReconcileService) actualReconcile(ctx context.Context, service *corev1.
 	farmName = strings.Replace(farmName, ".", "-", -1)
 
 	if service.DeletionTimestamp != nil {
-		_, err := Config.ZAPISession.DeleteFarm(farmName)
-		if err != nil {
-			return reconcile.Result{}, fmt.Errorf("failed to delete farm %s: %v", farmName, err)
+		_, err := Config.ZAPISession.GetFarm(farmName)
+		if err == nil {
+			_, err := Config.ZAPISession.DeleteFarm(farmName)
+			if err != nil {
+				return reconcile.Result{}, fmt.Errorf("failed to delete farm %s: %v", farmName, err)
+			}
 		}
-		_, err = Config.ZAPISession.DeleteVirtInt(virtIntName)
-		if err != nil {
-			return reconcile.Result{}, fmt.Errorf("failed to delete virtual interface %s: %v", virtIntName, err)
+
+		_, err = Config.ZAPISession.GetVirtInt(virtIntName)
+		if err == nil {
+			_, err := Config.ZAPISession.DeleteVirtInt(virtIntName)
+			if err != nil {
+				return reconcile.Result{}, fmt.Errorf("failed to delete virtual interface %s: %v", virtIntName, err)
+			}
 		}
 		finalizerSet := sets.NewString(service.Finalizers...)
 		if finalizerSet.Has(cleanupFinalizer) {
 			finalizerSet.Delete(cleanupFinalizer)
-			service.Finalizers = finalizerSet.List()
-			if err := r.Client.Update(ctx, service); err != nil {
+			if err := r.updateService(ctx, service, func(svc *corev1.Service) { svc.Finalizers = finalizerSet.List() }); err != nil {
 				return reconcile.Result{}, fmt.Errorf("failed to update service after removing cleanup finalizer: %v", err)
 			}
 		}
@@ -200,8 +207,7 @@ func (r *ReconcileService) actualReconcile(ctx context.Context, service *corev1.
 	}
 
 	if !sets.NewString(service.Finalizers...).Has(cleanupFinalizer) {
-		service.Finalizers = append(service.Finalizers, cleanupFinalizer)
-		if err := r.Update(ctx, service); err != nil {
+		if err := r.updateService(ctx, service, func(svc *corev1.Service) { svc.Finalizers = append(service.Finalizers, cleanupFinalizer) }); err != nil {
 			return reconcile.Result{Requeue: true}, fmt.Errorf("failed to add finalizer: %v", err)
 		}
 	}
@@ -242,8 +248,10 @@ func (r *ReconcileService) actualReconcile(ctx context.Context, service *corev1.
 	}
 
 	service.Status.LoadBalancer.Ingress = []corev1.LoadBalancerIngress{{IP: service.Spec.LoadBalancerIP}}
-	if err := r.Status().Update(ctx, service); err != nil {
-		return reconcile.Result{Requeue: true}, fmt.Errorf("fauked to set service status: %v", err)
+	if err := r.updateService(ctx, service, func(svc *corev1.Service) {
+		service.Status.LoadBalancer.Ingress = []corev1.LoadBalancerIngress{{IP: service.Spec.LoadBalancerIP}}
+	}); err != nil {
+		return reconcile.Result{Requeue: true}, fmt.Errorf("failed to set service status: %v", err)
 	}
 
 	return reconcile.Result{}, nil
@@ -348,7 +356,7 @@ func (r *ReconcileService) ensureVirtInt(name string, service *corev1.Service) e
 	// it depends on the Zevenet version - We are optimistic here and just try
 	// to create on err
 	if err != nil {
-		glog.V(4).Infof("Error when getting virtual interface %s: %v", name, err)
+		glog.V(6).Infof("Error when getting virtual interface %s: %v", name, err)
 	}
 	if virtInterface != nil && virtInterface.IP != service.Spec.LoadBalancerIP {
 		_, err = Config.ZAPISession.DeleteVirtInt(name)
@@ -366,4 +374,21 @@ func (r *ReconcileService) ensureVirtInt(name string, service *corev1.Service) e
 		r.recorder.Eventf(service, corev1.EventTypeNormal, "Created", "successfully created virtual interface %s", name)
 	}
 	return nil
+}
+
+func (r *ReconcileService) updateService(ctx context.Context, service *corev1.Service, modifyFunc func(*corev1.Service)) error {
+	// We have to store the namespace and name here as the service may be nil later on
+	name := service.Name
+	namespace := service.Namespace
+
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		if err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, service); err != nil {
+			return err
+		}
+		modifyFunc(service)
+		if err := r.Update(ctx, service); err != nil {
+			return err
+		}
+		return r.Status().Update(ctx, service)
+	})
 }
