@@ -111,9 +111,29 @@ func (r *ReconcileService) Reconcile(request reconcile.Request) (reconcile.Resul
 		return reconcile.Result{}, nil
 	}
 
+	virtIntName := fmt.Sprintf("%s:%s", Config.ParentInterface, service.Spec.LoadBalancerIP)
+	virtIntName = strings.Replace(virtIntName, ".", "", -1)
+	farmName := fmt.Sprintf("kube-%s-%s-%s", service.Namespace, service.Name, service.Spec.LoadBalancerIP)
+	farmName = strings.Replace(farmName, ".", "-", -1)
+
 	if service.DeletionTimestamp != nil {
-		//TODO: Cleanup logic
-		return reconcile.Result{}, fmt.Errorf("Not implemented")
+		_, err := Config.ZAPISession.DeleteFarm(farmName)
+		if err != nil {
+			return reconcile.Result{}, fmt.Errorf("failed to delete farm %s: %v", farmName, err)
+		}
+		_, err = Config.ZAPISession.DeleteVirtInt(virtIntName)
+		if err != nil {
+			return reconcile.Result{}, fmt.Errorf("failed to delete virtual interface %s: %v", virtIntName, err)
+		}
+		finalizerSet := sets.NewString(service.Finalizers...)
+		if finalizerSet.Has(cleanupFinalizer) {
+			finalizerSet.Delete(cleanupFinalizer)
+			service.Finalizers = finalizerSet.List()
+			if err := r.Client.Update(ctx, service); err != nil {
+				return reconcile.Result{}, fmt.Errorf("failed to update service after removing cleanup finalizer: %v", err)
+			}
+		}
+		return reconcile.Result{}, nil
 	}
 
 	if service.Spec.LoadBalancerIP == "" {
@@ -134,16 +154,11 @@ func (r *ReconcileService) Reconcile(request reconcile.Request) (reconcile.Resul
 		}
 	}
 
-	virtIntName := fmt.Sprintf("%s:%s", Config.ParentInterface, service.Spec.LoadBalancerIP)
-	virtIntName = strings.Replace(virtIntName, ".", "", -1)
-
 	if err := ensureVirtInt(virtIntName, service.Spec.LoadBalancerIP); err != nil {
 		glog.V(4).Infof("failed to ensure virtual interface: %v", err)
 		return reconcile.Result{Requeue: true}, fmt.Errorf("failed to ensure virtual interface: %v", err)
 	}
 
-	farmName := fmt.Sprintf("kube-%s-%s-%s", service.Namespace, service.Name, service.Spec.LoadBalancerIP)
-	farmName = strings.Replace(farmName, ".", "-", -1)
 	if err := ensureFarm(farmName, service.Spec.LoadBalancerIP, int(service.Spec.Ports[0].Port)); err != nil {
 		glog.V(4).Infof("failed to ensure farm %s: %v", farmName, err)
 		return reconcile.Result{Requeue: true}, fmt.Errorf("failed to ensure farm %s: %v", farmName, err)
