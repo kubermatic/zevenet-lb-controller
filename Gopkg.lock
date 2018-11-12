@@ -11,11 +11,11 @@
 
 [[projects]]
   branch = "support-backends-for-farms"
-  digest = "1:f0ccc9be0af79d593d667496a240136f88b727792235bea992f2dadae16d48f8"
+  digest = "1:d46bd922c2b7683614c4591ff088c0b0d3c087bb1d34e99ef187d776b6c872e8"
   name = "github.com/alvaroaleman/zevenet-lb-go"
   packages = ["."]
   pruneopts = "NUT"
-  revision = "b18b04350fe33d0a1af9f447bcdfd0a864b5a0a3"
+  revision = "37602a6687fbe4bf96f7c6cafa50c82c7afb9b9c"
 
 [[projects]]
   digest = "1:ffe9824d294da03b391f44e1ae8281281b4afc1bdaa9588c9097785e3af10cec"
@@ -846,7 +846,6 @@
     "github.com/onsi/ginkgo",
     "github.com/onsi/gomega",
     "golang.org/x/net/context",
-    "k8s.io/api/apps/v1",
     "k8s.io/api/core/v1",
     "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1",
     "k8s.io/apimachinery/pkg/api/errors",
@@ -858,12 +857,14 @@
     "k8s.io/client-go/plugin/pkg/client/auth/gcp",
     "k8s.io/client-go/rest",
     "k8s.io/client-go/tools/record",
+    "k8s.io/client-go/util/retry",
     "k8s.io/code-generator/cmd/client-gen",
     "k8s.io/code-generator/cmd/deepcopy-gen",
     "sigs.k8s.io/controller-runtime/pkg/client",
     "sigs.k8s.io/controller-runtime/pkg/client/config",
     "sigs.k8s.io/controller-runtime/pkg/controller",
     "sigs.k8s.io/controller-runtime/pkg/envtest",
+    "sigs.k8s.io/controller-runtime/pkg/event",
     "sigs.k8s.io/controller-runtime/pkg/handler",
     "sigs.k8s.io/controller-runtime/pkg/manager",
     "sigs.k8s.io/controller-runtime/pkg/predicate",

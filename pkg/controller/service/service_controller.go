@@ -257,7 +257,7 @@ func (r *ReconcileService) ensureFarm(name string, service *corev1.Service, virt
 	}
 	virtualIP := service.Spec.LoadBalancerIP
 
-	if err != nil && farm != nil && !farm.IsHTTP() && farm.VirtualIP == virtualIP && farm.VirtualPort == virtualPort {
+	if err == nil && farm != nil && !farm.IsHTTP() && farm.VirtualIP == virtualIP && farm.VirtualPort == virtualPort {
 		return nil
 	}
 
