@@ -194,7 +194,7 @@ func (r *ReconcileService) actualReconcile(ctx context.Context, service *corev1.
 	}
 
 	// TODO: This is a limitation of the zevent go lib we use, the actual api allows
-	// multiple services
+	// multiple ports
 	if len(service.Spec.Ports) != 1 {
 		return reconcile.Result{}, fmt.Errorf("this controller currently only supports services withe xactly one port")
 	}
@@ -224,6 +224,9 @@ func (r *ReconcileService) actualReconcile(ctx context.Context, service *corev1.
 
 	var desiredBackends []zevenet.BackendDetails
 	for _, node := range nodeList.Items {
+		if !isNodeReady(node) {
+			continue
+		}
 		for _, nodeAddress := range node.Status.Addresses {
 			if nodeAddress.Type == corev1.NodeExternalIP || nodeAddress.Type == corev1.NodeInternalIP {
 				desiredBackends = append(desiredBackends, zevenet.BackendDetails{
@@ -244,6 +247,15 @@ func (r *ReconcileService) actualReconcile(ctx context.Context, service *corev1.
 	}
 
 	return reconcile.Result{}, nil
+}
+
+func isNodeReady(node corev1.Node) bool {
+	for _, condition := range node.Status.Conditions {
+		if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *ReconcileService) ensureFarm(name string, service *corev1.Service, virtualPort int) error {
