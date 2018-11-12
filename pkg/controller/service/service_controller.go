@@ -27,6 +27,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -34,6 +35,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 )
+
+const cleanupFinalizer = "zevenet-controller.kubermatic.io/cleanup"
 
 func Add(mgr manager.Manager) error {
 	return add(mgr, newReconciler(mgr))
@@ -88,9 +91,12 @@ type ReconcileService struct {
 
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 func (r *ReconcileService) Reconcile(request reconcile.Request) (reconcile.Result, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// Fetch the Service instance
 	service := &corev1.Service{}
-	err := r.Get(context.TODO(), request.NamespacedName, service)
+	err := r.Get(ctx, request.NamespacedName, service)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// Object not found, return.  Created objects are automatically garbage collected.
@@ -119,6 +125,13 @@ func (r *ReconcileService) Reconcile(request reconcile.Request) (reconcile.Resul
 	// multiple services
 	if len(service.Spec.Ports) != 1 {
 		return reconcile.Result{}, fmt.Errorf("this controller currently only supports services withe xactly one port")
+	}
+
+	if !sets.NewString(service.Finalizers...).Has(cleanupFinalizer) {
+		service.Finalizers = append(service.Finalizers, cleanupFinalizer)
+		if err := r.Update(ctx, service); err != nil {
+			return reconcile.Result{Requeue: true}, fmt.Errorf("failed to add finalizer: %v", err)
+		}
 	}
 
 	virtIntName := fmt.Sprintf("%s:%s", Config.ParentInterface, service.Spec.LoadBalancerIP)
@@ -156,6 +169,11 @@ func (r *ReconcileService) Reconcile(request reconcile.Request) (reconcile.Resul
 	if err := ensureBackends(farmName, desiredBackends); err != nil {
 		glog.V(4).Infof("Failed to ensure backends for farm %s: %v", farmName, err)
 		return reconcile.Result{Requeue: true}, fmt.Errorf("failed to ensure backends for farm %s: %v", farmName, err)
+	}
+
+	service.Status.LoadBalancer.Ingress = []corev1.LoadBalancerIngress{{IP: service.Spec.LoadBalancerIP}}
+	if err = r.Status().Update(ctx, service); err != nil {
+		return reconcile.Result{Requeue: true}, fmt.Errorf("fauked to set service status: %v", err)
 	}
 
 	return reconcile.Result{}, nil
@@ -246,7 +264,7 @@ func ensureVirtInt(name, ip string) error {
 	// it depends on the Zevenet version - We are optimistic here and just try
 	// to create on err
 	if err != nil {
-		glog.V(4).Infof("Error wehen getting virtual interface %s: %v", name, err)
+		glog.V(4).Infof("Error when getting virtual interface %s: %v", name, err)
 	}
 	if virtInterface != nil && virtInterface.IP != ip {
 		_, err = Config.ZAPISession.DeleteVirtInt(name)
