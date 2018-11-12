@@ -16,10 +16,11 @@ limitations under the License.
 package service
 
 import (
+	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
-	"github.com/onsi/gomega"
 	"golang.org/x/net/context"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -37,19 +38,22 @@ var expectedRequest = reconcile.Request{NamespacedName: types.NamespacedName{Nam
 const timeout = time.Second * 5
 
 func TestReconcile(t *testing.T) {
-	g := gomega.NewGomegaWithT(t)
 	instance := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "foo", Namespace: "default"}}
 
 	// Setup the Manager and Controller.  Wrap the Controller Reconcile function so it writes each request to a
 	// channel when it is finished.
 	mgr, err := manager.New(cfg, manager.Options{})
-	g.Expect(err).NotTo(gomega.HaveOccurred())
+	if err != nil {
+		t.Fatalf("error getting manager: %v", err)
+	}
 	c = mgr.GetClient()
 
 	recFn, requests := SetupTestReconcile(newReconciler(mgr))
-	g.Expect(add(mgr, recFn)).NotTo(gomega.HaveOccurred())
+	if err := add(mgr, recFn); err != nil {
+		t.Fatalf("failed to add reconcile func to manager: %v", err)
+	}
 
-	stopMgr, mgrStopped := StartTestManager(mgr, g)
+	stopMgr, mgrStopped := StartTestManager(mgr, t)
 
 	defer func() {
 		close(stopMgr)
@@ -64,8 +68,21 @@ func TestReconcile(t *testing.T) {
 		t.Logf("failed to create object, got an invalid object error: %v", err)
 		return
 	}
-	g.Expect(err).NotTo(gomega.HaveOccurred())
+	t.Fatalf("error creating service: %v", err)
 	defer c.Delete(context.TODO(), instance)
-	g.Eventually(requests, timeout).Should(gomega.Receive(gomega.Equal(expectedRequest)))
+	if err := waitForExpectedReconcileRequest(requests, expectedRequest); err != nil {
+		t.Fatal(err)
+	}
+}
 
+func waitForExpectedReconcileRequest(c chan reconcile.Request, expected reconcile.Request) error {
+	select {
+	case received := <-c:
+		if reflect.DeepEqual(received, expected) {
+			return nil
+		}
+		return fmt.Errorf("received request does not match expected request")
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("timed out waiting to receive an object")
+	}
 }
