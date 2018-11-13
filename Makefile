@@ -6,7 +6,10 @@ all: test manager
 
 # Run tests
 test: generate fmt vet manifests
-	go test ./pkg/... ./cmd/... -coverprofile cover.out
+	go test -race ./pkg/... ./cmd/... -coverprofile cover.out
+
+test-e2e:
+	go test -race -tags=e2e ./test/e2e/ -v
 
 # Build manager binary
 manager: generate fmt vet
