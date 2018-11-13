@@ -200,8 +200,8 @@ func (r *ReconcileService) actualReconcile(ctx context.Context, service *corev1.
 		return reconcile.Result{Requeue: true}, fmt.Errorf("Service %s/%s has no LoadbalancerIP configured", service.Namespace, service.Name)
 	}
 
-	// TODO: This is a limitation of the zevent go lib we use, the actual api allows
-	// multiple ports
+	// The farm api allows specifying multiple ports, but a backend can have one port only so in practise, its only
+	// possible to offer one service
 	if len(service.Spec.Ports) != 1 {
 		return reconcile.Result{}, fmt.Errorf("this controller currently only supports services withe xactly one port")
 	}
