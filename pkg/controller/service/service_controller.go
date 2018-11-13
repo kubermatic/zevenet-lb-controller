@@ -223,7 +223,6 @@ func (r *ReconcileService) actualReconcile(ctx context.Context, service *corev1.
 	}
 
 	nodeList := &corev1.NodeList{}
-	// TODO: Find out how to use a lister with Kubebuilder
 	if err := r.List(context.Background(), nil, nodeList); err != nil {
 		return reconcile.Result{Requeue: true}, fmt.Errorf("failed to list nodes: %v", err)
 	}
@@ -281,21 +280,23 @@ func (r *ReconcileService) ensureFarm(name string, service *corev1.Service, virt
 		return nil
 	}
 
-	// The underlying lib does not support upting non-http farms yet so we have to delete and
-	// re-create it
-	// TODO: patch the zevenet lib to allow updating non-http farms
 	if farm != nil {
-		if _, err := Config.ZAPISession.DeleteFarm(name); err != nil {
-			return fmt.Errorf("failed to delete farm %s: %v", name, err)
+		farmDetails := &zevenet.FarmDetails{
+			FarmName:    name,
+			VirtualIP:   virtualIP,
+			VirtualPort: virtualPort,
 		}
-		r.recorder.Eventf(service, corev1.EventTypeNormal, "Created", "Successfully deleted farm %s", name)
+		if err := Config.ZAPISession.UpdateFarm(farmDetails); err != nil {
+			return fmt.Errorf("failed to update farm %s: %v", name, err)
+		}
+		r.recorder.Eventf(service, corev1.EventTypeNormal, "Created", "Successfully updated farm %s", name)
+	} else {
+		_, err = Config.ZAPISession.CreateFarmAsL4xNat(name, virtualIP, virtualPort)
+		if err != nil {
+			return fmt.Errorf("failed to create farm %s: %v", name, err)
+		}
+		r.recorder.Eventf(service, corev1.EventTypeNormal, "Created", "Successfully created farm %s", name)
 	}
-
-	_, err = Config.ZAPISession.CreateFarmAsL4xNat(name, virtualIP, virtualPort)
-	if err != nil {
-		return fmt.Errorf("failed to create farm %s: %v", name, err)
-	}
-	r.recorder.Eventf(service, corev1.EventTypeNormal, "Created", "Successfully created farm %s", name)
 
 	return nil
 }
