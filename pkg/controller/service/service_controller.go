@@ -364,7 +364,7 @@ func (r *ReconcileService) ensureVirtInt(name string, service *corev1.Service) e
 		if err != nil {
 			return fmt.Errorf("failed to delete virtual interface %s: %v", name, err)
 		}
-		r.recorder.Eventf(service, corev1.EventTypeNormal, "Created", "successfully deleted virtual interface %s", name)
+		r.recorder.Eventf(service, corev1.EventTypeNormal, "Created", "Successfully deleted virtual interface %s", name)
 	}
 
 	if err != nil || (virtInterface != nil && virtInterface.IP != service.Spec.LoadBalancerIP) {
@@ -372,7 +372,7 @@ func (r *ReconcileService) ensureVirtInt(name string, service *corev1.Service) e
 		if err != nil {
 			return fmt.Errorf("failed to create virtual interface %s: %v", name, err)
 		}
-		r.recorder.Eventf(service, corev1.EventTypeNormal, "Created", "successfully created virtual interface %s", name)
+		r.recorder.Eventf(service, corev1.EventTypeNormal, "Created", "Successfully created virtual interface %s", name)
 	}
 	return nil
 }
