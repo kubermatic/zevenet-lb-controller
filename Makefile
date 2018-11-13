@@ -1,6 +1,6 @@
 
 # Image URL to use all building/pushing image targets
-IMG ?= controller:latest
+IMG ?= alvaroaleman/zevenet-lb-controller:latest
 
 all: test manager
 

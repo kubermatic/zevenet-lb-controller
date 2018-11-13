@@ -1,0 +1,86 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: zevenet-controller-manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - services
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: zevenet-controller-manager-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: zevenet-controller-manager-role
+subjects:
+- kind: ServiceAccount
+  name: zevenet-lb-controller
+  namespace: kube-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  namespace: kube-system
+  name: zevenet-lb-controller
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: zevenet-credentials
+  namespace: kube-system
+stringData:
+  ZEVENET_URL: https://localhost:8444
+  ZEVENET_TOKEN: my-token
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: zevenet-lb-controller
+  name: zevenet-lb-controller
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zevenet-lb-controller
+  template:
+    metadata:
+      labels:
+        app: zevenet-lb-controller
+    spec:
+      containers:
+      - image: alvaroaleman/zevenet-lb-controller:latest
+        name: zevenet-lb-controller
+        env:
+        - name: ZEVENET_URL
+          valueFrom:
+            secretKeyRef:
+              name: zevenet-credentials
+              key: ZEVENET_URL
+        - name: ZEVENET_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: zevenet-credentials
+              key: ZEVENET_TOKEN
+      serviceAccountName: zevenet-lb-controller
