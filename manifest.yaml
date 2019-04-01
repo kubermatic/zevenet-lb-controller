@@ -68,8 +68,8 @@ metadata:
   name: zevenet-credentials
   namespace: kube-system
 stringData:
-  ZEVENET_URL: https://localhost:8444
-  ZEVENET_TOKEN: my-token
+  ZEVENET_URL: https://<<ZEVENET_HOST>>:<<ZEVENET_PORT>>
+  ZEVENET_TOKEN: <<ZEVENET_TOKEN>>
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -89,7 +89,7 @@ spec:
         app: zevenet-lb-controller
     spec:
       containers:
-      - image: alvaroaleman/zevenet-lb-controller:latest
+      - image: quay.io/kubermatic/zevenet-lb-controller:latest
         name: zevenet-lb-controller
         env:
         - name: ZEVENET_URL
