@@ -102,4 +102,6 @@ spec:
             secretKeyRef:
               name: zevenet-credentials
               key: ZEVENET_TOKEN
+        - name: ZEVENET_PARENT_INTERFACE_NAME
+          value: eth0
       serviceAccountName: zevenet-lb-controller
